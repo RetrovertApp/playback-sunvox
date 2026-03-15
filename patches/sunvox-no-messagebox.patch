@@ -1,0 +1,22 @@
+--- a/sunvox_lib/headers/sunvox.h
++++ b/sunvox_lib/headers/sunvox.h
+@@ -848,7 +848,9 @@
+ 	Store = (Type)GetProcAddress( Handle, Function ); \
+ 	if( Store == 0 ) { fn_not_found = Function; break; } \
+     }
++#ifndef ERROR_MSG
+ #define ERROR_MSG( msg ) MessageBoxA( 0, msg, "Error", MB_OK );
++#endif
+ #endif
+
+ #ifdef OS_UNIX
+@@ -857,7 +859,9 @@
+ 	Store = (Type)dlsym( Handle, Function ); \
+ 	if( Store == 0 ) { fn_not_found = Function; break; } \
+     }
++#ifndef ERROR_MSG
+ #define ERROR_MSG( msg ) printf( "ERROR: %s\n", msg );
++#endif
+ #endif
+
+ #ifdef OS_UNIX
