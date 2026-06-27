@@ -430,12 +430,19 @@ static RVPlaybackPlugin g_sunvox_plugin = {
     sunvox_plugin_metadata,
     sunvox_plugin_static_init,
     nullptr, // settings_updated
-    nullptr, // get_tracker_info
-    nullptr, // get_pattern_cell
-    nullptr, // get_pattern_num_rows
-    nullptr, // get_scope_data
     sunvox_plugin_static_destroy,
-    nullptr, // get_scope_channel_names
+
+    // Visualization: none (caps = 0; pure decoder, no pattern grid or scope).
+    nullptr, // get_structure
+    nullptr, // get_columns
+    nullptr, // get_pattern_channels
+    nullptr, // get_scope_channels
+    nullptr, // get_position
+    nullptr, // get_channel_rows
+    nullptr, // get_cells
+    nullptr, // set_scope_enabled
+    nullptr, // get_scope_samples
+    nullptr, // get_vu
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
