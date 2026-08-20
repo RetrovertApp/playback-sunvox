@@ -1,0 +1,9 @@
+[plugin]
+name = "sunvox"
+
+[data]
+entries = []
+
+[[fixtures]]
+file = "fixtures/song01.sunvox"
+sha256 = "4451db48a76cac0a464016da45b6407de299d566ab9bf60d38846ab92d6788fb"
