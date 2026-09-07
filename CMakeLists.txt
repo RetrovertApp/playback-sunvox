@@ -132,7 +132,13 @@ target_include_directories(sunvox_playback PRIVATE
 target_link_libraries(sunvox_playback PRIVATE
     "${SUNVOX_STATIC_LIB_PATH}"
 )
-if(UNIX AND NOT APPLE)
+if(WIN32)
+    # winmm, for two things the engine does on Windows regardless of the audio
+    # backend: the Waveform Audio (MMSYSTEM) driver, which is the one Windows
+    # backend with no compile-out switch upstream, and sundog_global_init's
+    # timeBeginPeriod call raising the system timer resolution.
+    target_link_libraries(sunvox_playback PRIVATE winmm)
+elseif(UNIX AND NOT APPLE)
     target_link_options(sunvox_playback PRIVATE -static-libstdc++)
     target_link_libraries(sunvox_playback PRIVATE m pthread)
 elseif(APPLE)
