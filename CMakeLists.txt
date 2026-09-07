@@ -23,6 +23,7 @@ download_library(
         patches/sunvox-msvc-compat.patch
         patches/sunvox-explicit-object-names.patch
         patches/sunvox-static-no-dllexport.patch
+        patches/sunvox-static-no-windows-h.patch
 )
 
 # The engine is built from the distribution's own sources as a static library and

@@ -1,0 +1,36 @@
+Stop the header from needing <windows.h> in a static build.
+
+The Windows branch of sunvox.h declares
+
+    typedef LPCTSTR LIBNAME_STR_TYPE;
+
+unconditionally, and LPCTSTR comes from <windows.h>, which the header
+never includes. A consumer that has not already pulled windows.h in fails
+on that line before reaching anything it actually wanted:
+
+    sunvox.h(78,13): error: unknown type name 'LPCTSTR'
+
+LIBNAME_STR_TYPE exists only for sv_load_dll2(), which lives in the
+dynamic-loading half of this header -- the #else side of
+"#ifdef SUNVOX_STATIC_LIB". A static consumer never resolves a symbol at
+runtime and never names that type, so declare it only where it is used.
+The rest of the static branch is already free of Windows types, so this
+is the whole of it: sunvox.h becomes includable from a plain C file
+without dragging in windows.h for a facility the static path does not
+have.
+
+diff --git a/sunvox_lib/headers/sunvox.h b/sunvox_lib/headers/sunvox.h
+index c230902..1c92373 100644
+--- a/sunvox_lib/headers/sunvox.h
++++ b/sunvox_lib/headers/sunvox.h
+@@ -75,7 +75,9 @@ typedef struct
+ #if defined(_WIN32) || defined(_WIN32_WCE) || defined(__WIN32__) || defined(_WIN64)
+     #define OS_WIN
+     #define LIBNAME "sunvox.dll"
+-    typedef LPCTSTR LIBNAME_STR_TYPE;
++    #ifndef SUNVOX_STATIC_LIB
++	typedef LPCTSTR LIBNAME_STR_TYPE;
++    #endif
+ #else
+     typedef const char* LIBNAME_STR_TYPE;
+ #endif
