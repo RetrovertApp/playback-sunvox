@@ -68,9 +68,21 @@ else()
     if(APPLE)
         # The makefile pins an SDK path by version, which will not be the one on
         # any given machine, and leaves LIBTOOL unset for its own macOS static
-        # target.
+        # target. CMAKE_OSX_SYSROOT is often empty because the compiler resolves
+        # the SDK itself, so ask for the path directly when it is.
+        set(SUNVOX_MACOS_SDK "${CMAKE_OSX_SYSROOT}")
+        if(NOT SUNVOX_MACOS_SDK)
+            execute_process(
+                COMMAND xcrun --sdk macosx --show-sdk-path
+                OUTPUT_VARIABLE SUNVOX_MACOS_SDK
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+            )
+        endif()
+        if(NOT SUNVOX_MACOS_SDK)
+            message(FATAL_ERROR "could not resolve a macOS SDK path for the SunVox engine build")
+        endif()
         list(APPEND SUNVOX_MAKE_TOOLS
-            "MACOS_SDK=${CMAKE_OSX_SYSROOT}"
+            "MACOS_SDK=${SUNVOX_MACOS_SDK}"
             "LIBTOOL=libtool"
             "LIBTOOL_FLAGS=-static")
     else()
