@@ -1,17 +1,39 @@
 Add MAKE_WITHOUT_AUDIO_DEVICE to build with no device backend.
 
 The plugin drives the engine through SV_INIT_FLAG_USER_AUDIO_CALLBACK and
-never opens an audio device, but the Linux build always compiles a
-backend in: JACK (needing jack/jack.h at build time) plus ALSA, which
-puts libasound.so.2 in DT_NEEDED.
+never opens an audio device, but every platform build compiles one in.
 
-NOALSA and NOOSS already exist in sound_linux.hpp and drop the device
-backends while leaving the mixing path -- sundog_sound_init and
-sundog_sound_callback -- intact. NOSOUND is not usable here: it compiles
-out the whole sound subsystem including the render callback.
+On Linux that is JACK (needing jack/jack.h at build time) plus ALSA, which
+puts libasound.so.2 in DT_NEEDED. NOALSA and NOOSS already exist in
+sound_linux.hpp and drop the device backends while leaving the mixing path
+-- sundog_sound_init and sundog_sound_callback -- intact. NOSOUND is not
+usable here: it compiles out the whole sound subsystem including the render
+callback.
 
+On Windows the same reasoning applies to the import table, which the release
+audit holds to a core-OS allowlist. NOASIO already exists in sound_win.hpp
+and is needed regardless: iasiodrv.h comes from the ASIO SDK and is not in
+this distribution, so the ASIO backend cannot compile here at all.
+DirectSound has no such switch even though every use of it is already behind
+#ifdef DSOUND -- the WinCE build turns it off -- so give it the NODSOUND
+spelling the ASIO backend already uses and drop dsound.dll, dxguid.dll and
+ole32.dll with it.
+
+diff --git a/lib_sundog/sound/sound_win.hpp b/lib_sundog/sound/sound_win.hpp
+index c4cb85c..174dbdc 100644
+--- a/lib_sundog/sound/sound_win.hpp
++++ b/lib_sundog/sound/sound_win.hpp
+@@ -2,7 +2,7 @@
+ // Windows: sound
+ //
+ 
+-#ifndef OS_WINCE
++#if !defined(OS_WINCE) && !defined(NODSOUND)
+     #define DSOUND
+ #endif
+ #if !defined(OS_WINCE) && !defined(NOASIO)
 diff --git a/sunvox_lib/make/Makefile b/sunvox_lib/make/Makefile
-index ad8983f..7d77dce 100755
+index ad8983f..6a32f8a 100755
 --- a/sunvox_lib/make/Makefile
 +++ b/sunvox_lib/make/Makefile
 @@ -49,10 +49,14 @@ ifeq ($(TARGET_OS),$(filter $(TARGET_OS),linux linux_raspberry_pi))
@@ -29,3 +51,13 @@ index ad8983f..7d77dce 100755
  ifeq ($(TARGET_OS),linux_android16)
      LIBS =
      SUNDOG_DEFINES += \
+@@ -74,6 +78,9 @@ ifeq ($(TARGET_OS),windows)
+     SUNDOG_DEFINES += \
+ 	-DCOLOR32BITS \
+ 	-D$(STYPE)
++ifeq ($(MAKE_WITHOUT_AUDIO_DEVICE),true)
++    SUNDOG_DEFINES += -DNODSOUND -DNOASIO
++endif
+ install:
+ 	mv -f $(APPNAME).dll ../windows/lib_$(TARGET_ARCH)$(ARCH_SUFFIX)/$(APPNAME)$(APPNAME_SUFFIX).dll
+ endif

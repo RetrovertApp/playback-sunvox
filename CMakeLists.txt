@@ -20,6 +20,7 @@ download_library(
         patches/sunvox-no-messagebox.patch
         patches/sunvox-config-null-terminator.patch
         patches/sunvox-no-audio-device.patch
+        patches/sunvox-msvc-compat.patch
 )
 
 # The engine is built from the distribution's own sources as a static library and

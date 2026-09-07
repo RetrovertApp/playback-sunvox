@@ -1,0 +1,99 @@
+Build the engine and its bundled codecs with an MSVC-mode compiler.
+
+The distribution's Windows path targets MinGW. The release harness compiles
+Windows plugins with clang-cl, and the engine has to be built by the same
+toolchain -- a MinGW archive cannot be linked into a clang-cl shared object,
+because the two disagree on the C++ ABI. That leaves four places where the
+sources assume a POSIX-ish compiler:
+
+  * M_PI. MSVC's <math.h> only declares it under _USE_MATH_DEFINES, and the
+    engine's DSP code reaches for it in about a hundred places across
+    lib_sunvox, lib_dsp and lib_flac. Define it for the whole Windows build
+    rather than per translation unit. MinGW ignores it.
+
+  * tremor's endian macros. os_types.h defines LITTLE_ENDIAN, BIG_ENDIAN and
+    BYTE_ORDER on Windows, but only inside its __GNUC__ branch. Without them
+    misc.h's "#if BYTE_ORDER==LITTLE_ENDIAN" and "#if BYTE_ORDER==BIG_ENDIAN"
+    both compare 0 to 0 and both succeed, so union magic is defined twice.
+    Every Windows target is little-endian, so hoisting the three defines out
+    of the __GNUC__ branch is right for both compilers and changes nothing
+    for MinGW.
+
+  * libFLAC's private/macros.h picks flac_min/flac_max from <sys/param.h>
+    when HAVE_SYS_PARAM_H is set. Windows has no such header. The branch
+    below it already handles _MSC_VER via __min/__max, so let the manual
+    config stop claiming the header on Windows and fall through to it. MinGW
+    is unaffected: it takes the __GNUC__ branch above both.
+
+  * tremor's misc.c includes <sys/time.h> unconditionally, but only its
+    _VDBG_GRAPHFILE debug allocator uses gettimeofday. Guard the include with
+    the thing that needs it.
+
+diff --git a/lib_flac/libFLAC/flac_config.h b/lib_flac/libFLAC/flac_config.h
+index ce99647..0338d2e 100644
+--- a/lib_flac/libFLAC/flac_config.h
++++ b/lib_flac/libFLAC/flac_config.h
+@@ -105,7 +105,9 @@
+ #define HAVE_SYS_IOCTL_H 1
+ 
+ /* Define to 1 if you have the <sys/param.h> header file. */
+-#define HAVE_SYS_PARAM_H 1
++#ifndef OS_WIN
++    #define HAVE_SYS_PARAM_H 1
++#endif
+ 
+ /* Define to 1 if you have the <sys/types.h> header file. */
+ #define HAVE_SYS_TYPES_H 1
+diff --git a/lib_vorbis/tremor/misc.c b/lib_vorbis/tremor/misc.c
+index b8f252f..eb05ac7 100644
+--- a/lib_vorbis/tremor/misc.c
++++ b/lib_vorbis/tremor/misc.c
+@@ -16,7 +16,9 @@
+ #include <stdio.h>
+ #define MISC_C
+ #include "tremor/misc.h"
++#ifdef _VDBG_GRAPHFILE
+ #include <sys/time.h>
++#endif
+ 
+ static void **pointers=NULL;
+ static long *insertlist=NULL; /* We can't embed this in the pointer list;
+diff --git a/lib_vorbis/tremor/tremor/os_types.h b/lib_vorbis/tremor/tremor/os_types.h
+index 1602f6d..59ce977 100644
+--- a/lib_vorbis/tremor/tremor/os_types.h
++++ b/lib_vorbis/tremor/tremor/os_types.h
+@@ -34,6 +34,10 @@
+ 
+ #ifdef _WIN32 
+ 
++#  define LITTLE_ENDIAN 1
++#  define BIG_ENDIAN 2
++#  define BYTE_ORDER 1
++
+ #  ifndef __GNUC__
+    /* MSVC/Borland */
+    typedef __int64 ogg_int64_t;
+@@ -42,9 +46,6 @@
+    typedef __int16 ogg_int16_t;
+    typedef unsigned __int16 ogg_uint16_t;
+ #  else
+-    #define LITTLE_ENDIAN 1
+-    #define BIG_ENDIAN 2
+-    #define BYTE_ORDER 1
+    typedef long long ogg_int64_t;
+    typedef int ogg_int32_t;
+    typedef unsigned int ogg_uint32_t;
+diff --git a/sunvox_lib/make/Makefile b/sunvox_lib/make/Makefile
+index 6a32f8a..ec772b6 100755
+--- a/sunvox_lib/make/Makefile
++++ b/sunvox_lib/make/Makefile
+@@ -77,7 +77,8 @@ ifeq ($(TARGET_OS),windows)
+     LIBS =
+     SUNDOG_DEFINES += \
+ 	-DCOLOR32BITS \
+-	-D$(STYPE)
++	-D$(STYPE) \
++	-D_USE_MATH_DEFINES
+ ifeq ($(MAKE_WITHOUT_AUDIO_DEVICE),true)
+     SUNDOG_DEFINES += -DNODSOUND -DNOASIO
+ endif
