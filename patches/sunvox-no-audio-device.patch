@@ -1,0 +1,31 @@
+Add MAKE_WITHOUT_AUDIO_DEVICE to build with no device backend.
+
+The plugin drives the engine through SV_INIT_FLAG_USER_AUDIO_CALLBACK and
+never opens an audio device, but the Linux build always compiles a
+backend in: JACK (needing jack/jack.h at build time) plus ALSA, which
+puts libasound.so.2 in DT_NEEDED.
+
+NOALSA and NOOSS already exist in sound_linux.hpp and drop the device
+backends while leaving the mixing path -- sundog_sound_init and
+sundog_sound_callback -- intact. NOSOUND is not usable here: it compiles
+out the whole sound subsystem including the render callback.
+
+diff --git a/sunvox_lib/make/Makefile b/sunvox_lib/make/Makefile
+index ad8983f..7d77dce 100755
+--- a/sunvox_lib/make/Makefile
++++ b/sunvox_lib/make/Makefile
+@@ -49,10 +49,14 @@ ifeq ($(TARGET_OS),$(filter $(TARGET_OS),linux linux_raspberry_pi))
+     SUNDOG_DEFINES += \
+ 	-D$(STYPE) \
+ 	-DCOLOR16BITS
++ifeq ($(MAKE_WITHOUT_AUDIO_DEVICE),true)
++    SUNDOG_DEFINES += -DNOALSA -DNOOSS
++else
+ ifneq ($(MAKE_WITH_SDL),1)
+     SUNDOG_DEFINES += -DJACK_AUDIO -DJACK_INPUT
+ endif
+ endif
++endif
+ ifeq ($(TARGET_OS),linux_android16)
+     LIBS =
+     SUNDOG_DEFINES += \

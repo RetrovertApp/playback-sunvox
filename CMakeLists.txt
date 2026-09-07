@@ -16,60 +16,90 @@ download_library(
     FILENAME "sunvox_dll-2.1.2b.tar.gz"
     HASH "a37882305031078b2f5fd54f10d796fa249b5a5e8e0fcd26578affd05cb724c3"
     EXTRACT_DIR "sunvox_dll-2.1.2b"
-    PATCHES patches/sunvox-no-messagebox.patch
+    PATCHES
+        patches/sunvox-no-messagebox.patch
+        patches/sunvox-config-null-terminator.patch
+        patches/sunvox-no-audio-device.patch
 )
 
-# Determine platform-specific library path
+# The engine is built from the distribution's own sources as a static library and
+# linked in, so the artifact stays a single file: the plugin ships as
+# <name>_playback alone, with no companion shared library beside it.
+#
+# MAKE_WITHOUT_AUDIO_DEVICE (added by patches/sunvox-no-audio-device.patch) drops
+# the ALSA/OSS/JACK backends. The plugin renders through
+# SV_INIT_FLAG_USER_AUDIO_CALLBACK and never opens a device, and without this the
+# engine would put libasound.so.2 in the plugin's DT_NEEDED, outside the release
+# dependency allowlist.
 if(WIN32)
-    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(SUNVOX_LIB_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/windows/lib_x86_64")
-    else()
-        set(SUNVOX_LIB_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/windows/lib_x86")
-    endif()
-    set(SUNVOX_LIB_NAME "sunvox.dll")
+    set(SUNVOX_MAKE_OS "windows")
 elseif(APPLE)
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
-        set(SUNVOX_LIB_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/macos/lib_arm64")
-    else()
-        set(SUNVOX_LIB_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/macos/lib_x86_64")
-    endif()
-    set(SUNVOX_LIB_NAME "sunvox.dylib")
+    set(SUNVOX_MAKE_OS "macos")
 else()
-    # Linux
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-        set(SUNVOX_LIB_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/linux/lib_arm64")
-    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
-        set(SUNVOX_LIB_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/linux/lib_arm")
-    else()
-        set(SUNVOX_LIB_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/linux/lib_x86_64")
-    endif()
-    set(SUNVOX_LIB_NAME "sunvox.so")
+    set(SUNVOX_MAKE_OS "linux")
 endif()
 
-# Plugin shared library (uses dynamic loading of sunvox, not linking)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    set(SUNVOX_MAKE_ARCH "arm64")
+    set(SUNVOX_MAKE_SIMD "")
+else()
+    set(SUNVOX_MAKE_ARCH "x86_64")
+    set(SUNVOX_MAKE_SIMD "MAKE_WITH_SSE_VER=sse3")
+endif()
+
+# The engine's own makefile only adds -fPIC for its dynamic-library target, and
+# the static archive is linked into this plugin's shared object. It builds CXX
+# from CC, so appending the flag there covers both.
+set(SUNVOX_MAKE_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/make")
+set(SUNVOX_STATIC_LIB_PATH
+    "${sunvox_dll_SOURCE_DIR}/sunvox_lib/${SUNVOX_MAKE_OS}/lib_${SUNVOX_MAKE_ARCH}/sunvox.a")
+
+add_custom_command(
+    OUTPUT "${SUNVOX_STATIC_LIB_PATH}"
+    COMMAND ${CMAKE_COMMAND} -E env
+        make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+        "CC=${CMAKE_C_COMPILER} -fPIC"
+        TARGET_OS=${SUNVOX_MAKE_OS}
+        TARGET_ARCH=${SUNVOX_MAKE_ARCH}
+        MAKE_STATIC_LIB=true
+        MAKE_WITHOUT_AUDIO_DEVICE=true
+        STYPE=PS_STYPE_FLOAT32
+        ${SUNVOX_MAKE_SIMD}
+    COMMAND ${CMAKE_COMMAND} -E env
+        make install
+        TARGET_OS=${SUNVOX_MAKE_OS}
+        TARGET_ARCH=${SUNVOX_MAKE_ARCH}
+        MAKE_STATIC_LIB=true
+        MAKE_WITHOUT_AUDIO_DEVICE=true
+        STYPE=PS_STYPE_FLOAT32
+        ${SUNVOX_MAKE_SIMD}
+    WORKING_DIRECTORY "${SUNVOX_MAKE_DIR}"
+    COMMENT "Building the SunVox engine as a static library"
+    VERBATIM
+)
+add_custom_target(sunvox_engine DEPENDS "${SUNVOX_STATIC_LIB_PATH}")
+
 add_library(sunvox_playback SHARED
     sunvox_plugin.c
 )
+add_dependencies(sunvox_playback sunvox_engine)
 
 target_include_directories(sunvox_playback PRIVATE
     ${sunvox_dll_SOURCE_DIR}/sunvox_lib/headers
 )
 
-# Link dl for dlopen/dlsym used by sunvox dynamic loading
+# The engine is C++; the plugin is C. Link the C++ runtime statically so it does
+# not appear in DT_NEEDED either.
+target_link_libraries(sunvox_playback PRIVATE
+    "${SUNVOX_STATIC_LIB_PATH}"
+)
 if(UNIX AND NOT APPLE)
-    target_link_libraries(sunvox_playback PRIVATE dl)
+    target_link_options(sunvox_playback PRIVATE -static-libstdc++)
+    target_link_libraries(sunvox_playback PRIVATE m pthread)
 endif()
 
 target_compile_options(sunvox_playback PRIVATE
     -Wno-unused-parameter
-)
-
-# Copy the sunvox shared library alongside the plugin
-add_custom_command(TARGET sunvox_playback POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${SUNVOX_LIB_DIR}/${SUNVOX_LIB_NAME}"
-        "$<TARGET_FILE_DIR:sunvox_playback>/${SUNVOX_LIB_NAME}"
-    COMMENT "Copying SunVox library to plugin directory"
 )
 
 rv_set_plugin_properties(sunvox_playback)

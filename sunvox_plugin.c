@@ -2,7 +2,7 @@
 // SunVox Playback Plugin
 //
 // Implements RVPlaybackPlugin interface for SunVox modular synthesizer projects.
-// Uses the SunVox library via dynamic loading (sv_load_dll/sv_unload_dll).
+// Links the SunVox engine statically, so the artifact stays a single library.
 // The library is initialized in offline/single-threaded mode for waveform generation.
 // SunVox uses global state managed via numbered slots.
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -12,16 +12,9 @@
 #define nullptr ((void*)0)
 #endif
 
-// Must be defined before including sunvox.h to get the dynamic loading implementation
-#define SUNVOX_MAIN
-
-// sunvox.h uses dlopen/dlsym; dladdr needs _GNU_SOURCE
-#ifdef _WIN32
-#include <windows.h>
-#else
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#endif
+// Must be defined before including sunvox.h to declare the engine's own symbols
+// rather than the dlopen-and-bind trampolines.
+#define SUNVOX_STATIC_LIB
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -344,56 +337,14 @@ static void sunvox_plugin_static_init(const RVService* service_api) {
     rv_init_metadata_api(service_api);
 
     if (!g_sunvox_initialized) {
-        // Find our own directory, then load sunvox library from there
-        int load_result = -1;
-        char lib_path[4096];
-#ifndef _WIN32
-        Dl_info dl_info;
-        if (dladdr((void*)sunvox_plugin_static_init, &dl_info) && dl_info.dli_fname) {
-            // Build path: dirname(our .so) + "/sunvox.so"
-            strncpy(lib_path, dl_info.dli_fname, sizeof(lib_path) - 1);
-            lib_path[sizeof(lib_path) - 1] = '\0';
-            char* last_slash = strrchr(lib_path, '/');
-            if (last_slash) {
-                last_slash[1] = '\0';
-                size_t dir_len = strlen(lib_path);
-                snprintf(lib_path + dir_len, sizeof(lib_path) - dir_len, "sunvox.so");
-                rv_info("sunvox: Loading library from %s", lib_path);
-                load_result = sv_load_dll2(lib_path);
-            }
-        }
-#else
-        // Use GetModuleHandleExA to find our DLL directory, then load sunvox.dll from there.
-        // This avoids sv_load_dll() which searches system paths and may hang or show dialogs.
-        HMODULE self_module = NULL;
-        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                               (LPCSTR)sunvox_plugin_static_init, &self_module)) {
-            DWORD path_len = GetModuleFileNameA(self_module, lib_path, sizeof(lib_path));
-            if (path_len > 0 && path_len < sizeof(lib_path)) {
-                char* last_slash = strrchr(lib_path, '\\');
-                if (last_slash) {
-                    last_slash[1] = '\0';
-                    size_t dir_len = strlen(lib_path);
-                    snprintf(lib_path + dir_len, sizeof(lib_path) - dir_len, "sunvox.dll");
-                    rv_info("sunvox: Loading library from %s", lib_path);
-                    load_result = sv_load_dll2(lib_path);
-                }
-            }
-        }
-#endif
-        if (load_result != 0) {
-            rv_error("sunvox: Failed to load sunvox library");
-            return;
-        }
-
-        // Initialize in offline mode: no audio device, single-threaded, F32 output
+        // Initialize in offline mode: no audio device, single-threaded, F32 output.
+        // The engine is linked in, so there is no library to locate or load first.
         int flags = SV_INIT_FLAG_NO_DEBUG_OUTPUT | SV_INIT_FLAG_USER_AUDIO_CALLBACK | SV_INIT_FLAG_ONE_THREAD
                     | SV_INIT_FLAG_AUDIO_FLOAT32;
 
         int ver = sv_init(0, OUTPUT_SAMPLE_RATE, 2, flags);
         if (ver < 0) {
             rv_error("sunvox: sv_init failed (error %d)", ver);
-            sv_unload_dll();
             return;
         }
 
@@ -407,7 +358,6 @@ static void sunvox_plugin_static_init(const RVService* service_api) {
 static void sunvox_plugin_static_destroy(void) {
     if (g_sunvox_initialized) {
         sv_deinit();
-        sv_unload_dll();
         g_sunvox_initialized = 0;
     }
 }

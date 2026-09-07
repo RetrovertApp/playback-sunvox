@@ -1,0 +1,24 @@
+Terminate g_app_config with NULL, not the string "0".
+
+sconfig_load() and its siblings walk g_app_config until a NULL entry,
+but the array ends with the string "0", which is a valid pointer. When
+no config file is present every consumer runs past the end of the array
+and dereferences whatever follows it.
+
+The shipped shared library masks this: the bytes after the array happen
+to be benign. Linked statically into another binary it reads garbage and
+crashes in sv_init -> sconfig_load -> sfs_open -> smem_strlen.
+
+diff --git a/sunvox_lib/main/sunvox_lib.cpp b/sunvox_lib/main/sunvox_lib.cpp
+index 40c31c4..1645ad4 100644
+--- a/sunvox_lib/main/sunvox_lib.cpp
++++ b/sunvox_lib/main/sunvox_lib.cpp
+@@ -30,7 +30,7 @@
+     #define SUNVOX_EXPORT
+ #endif
+ 
+-const char* g_app_config[] = { "1:/sunvox_dll_config.ini", "2:/sunvox_dll_config.ini", "0" };
++const char* g_app_config[] = { "1:/sunvox_dll_config.ini", "2:/sunvox_dll_config.ini", NULL };
+ const char* g_app_log = "3:/sunvox_dll_log.txt";
+ const char* g_app_name = "SunVox Library";
+ const char* g_app_name_short = "SunVox Library";
