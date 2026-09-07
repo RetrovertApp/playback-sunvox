@@ -47,32 +47,42 @@ else()
     set(SUNVOX_MAKE_SIMD "MAKE_WITH_SSE_VER=sse3")
 endif()
 
-# The engine's own makefile only adds -fPIC for its dynamic-library target, and
-# the static archive is linked into this plugin's shared object. It builds CXX
-# from CC, so appending the flag there covers both.
 set(SUNVOX_MAKE_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/make")
 set(SUNVOX_STATIC_LIB_PATH
     "${sunvox_dll_SOURCE_DIR}/sunvox_lib/${SUNVOX_MAKE_OS}/lib_${SUNVOX_MAKE_ARCH}/sunvox.a")
+
+# The compiler path is quoted inside the variable's value: the makefile expands
+# $(CC) straight into a shell command, and on Windows the toolchain lives under
+# a path with a space in it.
+if(WIN32)
+    # The makefile's Windows branch defaults to the MinGW toolchain; this build
+    # uses the same clang the plugin is compiled with. -fPIC is a no-op here.
+    set(SUNVOX_MAKE_CC "CC=\"${CMAKE_C_COMPILER}\"")
+    set(SUNVOX_MAKE_AR "AR=llvm-ar")
+else()
+    # The makefile only adds -fPIC for its dynamic-library target, and the static
+    # archive is linked into this plugin's shared object. CXX is built from CC,
+    # so appending the flag there covers both.
+    set(SUNVOX_MAKE_CC "CC=\"${CMAKE_C_COMPILER}\" -fPIC")
+    set(SUNVOX_MAKE_AR "AR=ar")
+endif()
+
+set(SUNVOX_MAKE_ARGS
+    TARGET_OS=${SUNVOX_MAKE_OS}
+    TARGET_ARCH=${SUNVOX_MAKE_ARCH}
+    MAKE_STATIC_LIB=true
+    MAKE_WITHOUT_AUDIO_DEVICE=true
+    STYPE=PS_STYPE_FLOAT32
+    ${SUNVOX_MAKE_SIMD}
+)
 
 add_custom_command(
     OUTPUT "${SUNVOX_STATIC_LIB_PATH}"
     COMMAND ${CMAKE_COMMAND} -E env
         make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-        "CC=${CMAKE_C_COMPILER} -fPIC"
-        TARGET_OS=${SUNVOX_MAKE_OS}
-        TARGET_ARCH=${SUNVOX_MAKE_ARCH}
-        MAKE_STATIC_LIB=true
-        MAKE_WITHOUT_AUDIO_DEVICE=true
-        STYPE=PS_STYPE_FLOAT32
-        ${SUNVOX_MAKE_SIMD}
+        "${SUNVOX_MAKE_CC}" "${SUNVOX_MAKE_AR}" ${SUNVOX_MAKE_ARGS}
     COMMAND ${CMAKE_COMMAND} -E env
-        make install
-        TARGET_OS=${SUNVOX_MAKE_OS}
-        TARGET_ARCH=${SUNVOX_MAKE_ARCH}
-        MAKE_STATIC_LIB=true
-        MAKE_WITHOUT_AUDIO_DEVICE=true
-        STYPE=PS_STYPE_FLOAT32
-        ${SUNVOX_MAKE_SIMD}
+        make install "${SUNVOX_MAKE_AR}" ${SUNVOX_MAKE_ARGS}
     WORKING_DIRECTORY "${SUNVOX_MAKE_DIR}"
     COMMENT "Building the SunVox engine as a static library"
     VERBATIM
