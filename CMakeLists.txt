@@ -1,7 +1,7 @@
 # SunVox Playback Plugin
 #
 # This plugin plays SunVox modular synthesizer projects (.sunvox) using the
-# SunVox library. SunVox is distributed as a binary-only shared library.
+# SunVox library, built from the distribution's sources and linked statically.
 
 cmake_minimum_required(VERSION 3.16)
 project(playback_sunvox C)
@@ -54,17 +54,28 @@ set(SUNVOX_STATIC_LIB_PATH
 # The compiler path is quoted inside the variable's value: the makefile expands
 # $(CC) straight into a shell command, and on Windows the toolchain lives under
 # a path with a space in it.
+set(SUNVOX_MAKE_TOOLS "")
 if(WIN32)
     # The makefile's Windows branch defaults to the MinGW toolchain; this build
     # uses the same clang the plugin is compiled with. -fPIC is a no-op here.
     set(SUNVOX_MAKE_CC "CC=\"${CMAKE_C_COMPILER}\"")
-    set(SUNVOX_MAKE_AR "AR=llvm-ar")
+    list(APPEND SUNVOX_MAKE_TOOLS "AR=llvm-ar")
 else()
     # The makefile only adds -fPIC for its dynamic-library target, and the static
     # archive is linked into this plugin's shared object. CXX is built from CC,
     # so appending the flag there covers both.
     set(SUNVOX_MAKE_CC "CC=\"${CMAKE_C_COMPILER}\" -fPIC")
-    set(SUNVOX_MAKE_AR "AR=ar")
+    if(APPLE)
+        # The makefile pins an SDK path by version, which will not be the one on
+        # any given machine, and leaves LIBTOOL unset for its own macOS static
+        # target.
+        list(APPEND SUNVOX_MAKE_TOOLS
+            "MACOS_SDK=${CMAKE_OSX_SYSROOT}"
+            "LIBTOOL=libtool"
+            "LIBTOOL_FLAGS=-static")
+    else()
+        list(APPEND SUNVOX_MAKE_TOOLS "AR=ar")
+    endif()
 endif()
 
 set(SUNVOX_MAKE_ARGS
@@ -80,9 +91,9 @@ add_custom_command(
     OUTPUT "${SUNVOX_STATIC_LIB_PATH}"
     COMMAND ${CMAKE_COMMAND} -E env
         make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-        "${SUNVOX_MAKE_CC}" "${SUNVOX_MAKE_AR}" ${SUNVOX_MAKE_ARGS}
+        "${SUNVOX_MAKE_CC}" ${SUNVOX_MAKE_TOOLS} ${SUNVOX_MAKE_ARGS}
     COMMAND ${CMAKE_COMMAND} -E env
-        make install "${SUNVOX_MAKE_AR}" ${SUNVOX_MAKE_ARGS}
+        make install ${SUNVOX_MAKE_TOOLS} ${SUNVOX_MAKE_ARGS}
     WORKING_DIRECTORY "${SUNVOX_MAKE_DIR}"
     COMMENT "Building the SunVox engine as a static library"
     VERBATIM
@@ -106,6 +117,15 @@ target_link_libraries(sunvox_playback PRIVATE
 if(UNIX AND NOT APPLE)
     target_link_options(sunvox_playback PRIVATE -static-libstdc++)
     target_link_libraries(sunvox_playback PRIVATE m pthread)
+elseif(APPLE)
+    # The engine's macOS build reaches for the system frameworks its own
+    # makefile links against.
+    target_link_libraries(sunvox_playback PRIVATE
+        "-framework Cocoa"
+        "-framework Carbon"
+        "-framework AudioUnit"
+        "-framework CoreAudio"
+    )
 endif()
 
 target_compile_options(sunvox_playback PRIVATE
