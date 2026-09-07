@@ -2,7 +2,7 @@ name: Release artifacts
 
 on:
   push:
-    branches: [master]
+    branches: [master, windows-build]
   workflow_dispatch: {}
 
 permissions:
@@ -14,3 +14,5 @@ permissions:
 jobs:
   build:
     uses: RetrovertApp/retrovert-build-harness/.github/workflows/build-plugin.yml@main
+    with:
+      upload: ${{ github.ref == 'refs/heads/master' }}
