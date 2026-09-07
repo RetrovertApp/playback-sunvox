@@ -22,6 +22,7 @@ download_library(
         patches/sunvox-no-audio-device.patch
         patches/sunvox-msvc-compat.patch
         patches/sunvox-explicit-object-names.patch
+        patches/sunvox-static-no-dllexport.patch
 )
 
 # The engine is built from the distribution's own sources as a static library and
