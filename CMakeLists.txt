@@ -48,8 +48,12 @@ else()
 endif()
 
 set(SUNVOX_MAKE_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/make")
-set(SUNVOX_STATIC_LIB_PATH
-    "${sunvox_dll_SOURCE_DIR}/sunvox_lib/${SUNVOX_MAKE_OS}/lib_${SUNVOX_MAKE_ARCH}/sunvox.a")
+
+# The archive the makefile's "all" target builds, where it builds it. The
+# makefile's own "install" rule is not usable for a static build: only its
+# Linux branch expands FILE_EXT, so macOS moves a sunvox.dylib and Windows a
+# sunvox.dll, neither of which a MAKE_STATIC_LIB=true build ever produces.
+set(SUNVOX_STATIC_LIB_PATH "${SUNVOX_MAKE_DIR}/sunvox.a")
 
 # The compiler path is quoted inside the variable's value: the makefile expands
 # $(CC) straight into a shell command, and on Windows the toolchain lives under
@@ -104,8 +108,6 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E env
         make -j${CMAKE_BUILD_PARALLEL_LEVEL}
         "${SUNVOX_MAKE_CC}" ${SUNVOX_MAKE_TOOLS} ${SUNVOX_MAKE_ARGS}
-    COMMAND ${CMAKE_COMMAND} -E env
-        make install ${SUNVOX_MAKE_TOOLS} ${SUNVOX_MAKE_ARGS}
     WORKING_DIRECTORY "${SUNVOX_MAKE_DIR}"
     COMMENT "Building the SunVox engine as a static library"
     VERBATIM
