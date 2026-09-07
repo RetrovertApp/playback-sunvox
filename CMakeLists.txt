@@ -1,15 +1,26 @@
 # SunVox Playback Plugin
 #
 # This plugin plays SunVox modular synthesizer projects (.sunvox) using the
-# SunVox library, built from the distribution's sources and linked statically.
+# SunVox engine, compiled from the distribution's sources and linked in, so the
+# artifact stays a single file with no companion shared library beside it.
+#
+# The distribution ships its own GNU makefile. This build does not use it: it
+# compiles the same sources directly, the way every other plugin in this repo
+# treats its third-party code. Driving that makefile meant overriding its MinGW
+# toolchain, routing every -D through its SUNDOG_DEFINES variable, and patching
+# 122 of its rules that never named their output file -- all of which CMake
+# does correctly by construction. The engine's own configuration is reproduced
+# below, and was taken from "make -n" rather than by reading the makefiles.
 
 cmake_minimum_required(VERSION 3.16)
-project(playback_sunvox C)
+project(playback_sunvox C CXX)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(PlaybackPlugin)
 
-# Download sunvox_dll distribution
 download_library(
     NAME sunvox_dll
     URL "https://github.com/warmplace/sunvox_dll/archive/refs/tags/2.1.2b.tar.gz"
@@ -21,129 +32,202 @@ download_library(
         patches/sunvox-config-null-terminator.patch
         patches/sunvox-no-audio-device.patch
         patches/sunvox-msvc-compat.patch
-        patches/sunvox-explicit-object-names.patch
-        patches/sunvox-static-no-dllexport.patch
-        patches/sunvox-static-no-windows-h.patch
+        patches/sunvox-static-lib.patch
 )
 
-# The engine is built from the distribution's own sources as a static library and
-# linked in, so the artifact stays a single file: the plugin ships as
-# <name>_playback alone, with no companion shared library beside it.
-#
-# MAKE_WITHOUT_AUDIO_DEVICE (added by patches/sunvox-no-audio-device.patch) drops
-# the ALSA/OSS/JACK backends. The plugin renders through
-# SV_INIT_FLAG_USER_AUDIO_CALLBACK and never opens a device, and without this the
-# engine would put libasound.so.2 in the plugin's DT_NEEDED, outside the release
-# dependency allowlist.
+# The 109 sources the engine's makefile compiles for this configuration
+# (MAKE_STATIC_LIB, no GUI, no main, no encoders). macOS adds one more.
+set(SUNVOX_ENGINE_SOURCES
+    # lib_sundog (12)
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/file/file.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/file/file_format.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/file/file_format_rw.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/log/log.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/main/main.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/memory/memory.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/misc/misc.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/net/net.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/sound/sound.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/thread/thread.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/time/time.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog/video/video.cpp
+    # lib_sunvox (62)
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/midi_file/midi_file.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynth_dsp.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynth_gui_utils.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynth_net.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynth_net_midi_in.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynth_strings.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_adsr.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_amplifier.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_compressor.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_ctl2note.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_dc_blocker.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_delay.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_distortion.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_drumsynth.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_echo.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_eq.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_feedback.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_fft.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_filter.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_filter2.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_flanger.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_fm.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_fm2.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_generator.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_generator2.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_glide.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_gpio.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_input.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_kicker.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_lfo.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_loop.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_metamodule.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_modulator.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_multictl.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_multisynth.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_pitch2ctl.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_pitch_detector.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_pitch_shifter.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_reverb.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_sampler.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_smooth.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_sound2ctl.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_spectravoice.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_velocity2ctl.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_vibrato.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_vocal_filter.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_vorbis_player.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/psynth/psynths_waveshaper.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_action_handler.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_audio_callback.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_export.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_load_module.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_load_proj.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_patterns.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_record.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_save_module.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/sunvox_engine_save_proj.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/xm/xm_instrum.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/xm/xm_pattern.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/xm/xm_sample.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox/xm/xm_song.cpp
+    # lib_dsp (2)
+    ${sunvox_dll_SOURCE_DIR}/lib_dsp/dsp_functions.cpp
+    ${sunvox_dll_SOURCE_DIR}/lib_dsp/dsp_tables.cpp
+    # lib_vorbis (15)
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/libogg/bitwise.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/libogg/framing.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/bitwise.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/codebook.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/dsp.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/floor0.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/floor1.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/floor_lookup.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/framing.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/info.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/mapping0.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/mdct.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/misc.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/res012.c
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor/vorbisfile.c
+    # lib_flac (17)
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/bitmath.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/bitreader.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/cpu.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/crc.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/fixed.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/fixed_intrin_sse2.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/fixed_intrin_sse42.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/fixed_intrin_ssse3.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/format.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/lpc.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/lpc_intrin_neon.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/lpc_intrin_sse2.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/lpc_intrin_sse41.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/md5.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/memory.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/stream_decoder.c
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC/win_utf8_io.c
+    # sunvox_lib (1)
+    ${sunvox_dll_SOURCE_DIR}/sunvox_lib/main/sunvox_lib.cpp)
+if(APPLE)
+    list(APPEND SUNVOX_ENGINE_SOURCES
+        ${sunvox_dll_SOURCE_DIR}/lib_sundog/file/file_apple.mm)
+endif()
+
+add_library(sunvox_engine STATIC ${SUNVOX_ENGINE_SOURCES})
+suppress_external_warnings(sunvox_engine)
+set_target_properties(sunvox_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+target_include_directories(sunvox_engine PUBLIC
+    ${sunvox_dll_SOURCE_DIR}/lib_sundog
+    ${sunvox_dll_SOURCE_DIR}/lib_sunvox
+    ${sunvox_dll_SOURCE_DIR}/lib_dsp
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/tremor
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/libvorbis
+    ${sunvox_dll_SOURCE_DIR}/lib_vorbis/libogg
+    ${sunvox_dll_SOURCE_DIR}/lib_mp3
+    ${sunvox_dll_SOURCE_DIR}/lib_flac/libFLAC
+    ${sunvox_dll_SOURCE_DIR}/sunvox_lib/headers
+)
+
+# SUNVOX_STATIC_LIB is what tells the sources they are being compiled into
+# someone else's binary: no __declspec(dllexport) on the API, and no LPCTSTR
+# typedef for a runtime loader this build does not have.
+target_compile_definitions(sunvox_engine PUBLIC
+    SUNVOX_STATIC_LIB
+)
+target_compile_definitions(sunvox_engine PRIVATE
+    APPNAME="sunvox"
+    SUNVOX_LIB
+    MIN_SAMPLE_RATE=44100
+    PS_STYPE_FLOAT32
+    NOMAIN NOGUI NOVIDEO NOVCAP NOLIST NOFILEUTILS NOIMAGEFORMATS NOMIDI
+    NOOGGENC NOFLACENC
+)
+
+# No device backend on any platform: the plugin renders through
+# SV_INIT_FLAG_USER_AUDIO_CALLBACK and never opens one, and each backend it
+# would otherwise compile in drags a library past the release audit --
+# libasound on Linux, dsound/dxguid/ole32 on Windows.
 if(WIN32)
-    set(SUNVOX_MAKE_OS "windows")
+    target_compile_definitions(sunvox_engine PRIVATE
+        COLOR32BITS NODSOUND NOASIO _USE_MATH_DEFINES)
+    target_compile_options(sunvox_engine PRIVATE -fno-exceptions)
 elseif(APPLE)
-    set(SUNVOX_MAKE_OS "macos")
+    target_compile_definitions(sunvox_engine PRIVATE
+        COLOR32BITS OPENGL CPUMARK=0)
 else()
-    set(SUNVOX_MAKE_OS "linux")
+    target_compile_definitions(sunvox_engine PRIVATE
+        COLOR16BITS NOALSA NOOSS)
 endif()
 
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
-    set(SUNVOX_MAKE_ARCH "arm64")
-    set(SUNVOX_MAKE_SIMD "")
-else()
-    set(SUNVOX_MAKE_ARCH "x86_64")
-    set(SUNVOX_MAKE_SIMD "MAKE_WITH_SSE_VER=sse3")
+# The engine is a DSP library and its makefile builds it fast-math everywhere.
+target_compile_options(sunvox_engine PRIVATE -ffast-math)
+if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+    target_compile_options(sunvox_engine PRIVATE -msse3)
 endif()
-
-set(SUNVOX_MAKE_DIR "${sunvox_dll_SOURCE_DIR}/sunvox_lib/make")
-
-# The archive the makefile's "all" target builds, where it builds it. The
-# makefile's own "install" rule is not usable for a static build: only its
-# Linux branch expands FILE_EXT, so macOS moves a sunvox.dylib and Windows a
-# sunvox.dll, neither of which a MAKE_STATIC_LIB=true build ever produces.
-set(SUNVOX_STATIC_LIB_PATH "${SUNVOX_MAKE_DIR}/sunvox.a")
-
-# The compiler path is quoted inside the variable's value: the makefile expands
-# $(CC) straight into a shell command, and on Windows the toolchain lives under
-# a path with a space in it.
-set(SUNVOX_MAKE_TOOLS "")
-if(WIN32)
-    # The makefile's Windows branch defaults to the MinGW toolchain; this build
-    # uses the same clang the plugin is compiled with. -fPIC is a no-op here.
-    set(SUNVOX_MAKE_CC "CC=\"${CMAKE_C_COMPILER}\"")
-    list(APPEND SUNVOX_MAKE_TOOLS "AR=llvm-ar")
-else()
-    # The makefile only adds -fPIC for its dynamic-library target, and the static
-    # archive is linked into this plugin's shared object. CXX is built from CC,
-    # so appending the flag there covers both.
-    set(SUNVOX_MAKE_CC "CC=\"${CMAKE_C_COMPILER}\" -fPIC")
-    if(APPLE)
-        # The makefile pins an SDK path by version, which will not be the one on
-        # any given machine, and leaves LIBTOOL unset for its own macOS static
-        # target. CMAKE_OSX_SYSROOT is often empty because the compiler resolves
-        # the SDK itself, so ask for the path directly when it is.
-        set(SUNVOX_MACOS_SDK "${CMAKE_OSX_SYSROOT}")
-        if(NOT SUNVOX_MACOS_SDK)
-            execute_process(
-                COMMAND xcrun --sdk macosx --show-sdk-path
-                OUTPUT_VARIABLE SUNVOX_MACOS_SDK
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-            )
-        endif()
-        if(NOT SUNVOX_MACOS_SDK)
-            message(FATAL_ERROR "could not resolve a macOS SDK path for the SunVox engine build")
-        endif()
-        list(APPEND SUNVOX_MAKE_TOOLS
-            "MACOS_SDK=${SUNVOX_MACOS_SDK}"
-            "LIBTOOL=libtool"
-            "LIBTOOL_FLAGS=-static")
-    else()
-        list(APPEND SUNVOX_MAKE_TOOLS "AR=ar")
-    endif()
-endif()
-
-set(SUNVOX_MAKE_ARGS
-    TARGET_OS=${SUNVOX_MAKE_OS}
-    TARGET_ARCH=${SUNVOX_MAKE_ARCH}
-    MAKE_STATIC_LIB=true
-    MAKE_WITHOUT_AUDIO_DEVICE=true
-    STYPE=PS_STYPE_FLOAT32
-    ${SUNVOX_MAKE_SIMD}
-)
-
-add_custom_command(
-    OUTPUT "${SUNVOX_STATIC_LIB_PATH}"
-    COMMAND ${CMAKE_COMMAND} -E env
-        make -j${CMAKE_BUILD_PARALLEL_LEVEL}
-        "${SUNVOX_MAKE_CC}" ${SUNVOX_MAKE_TOOLS} ${SUNVOX_MAKE_ARGS}
-    WORKING_DIRECTORY "${SUNVOX_MAKE_DIR}"
-    COMMENT "Building the SunVox engine as a static library"
-    VERBATIM
-)
-add_custom_target(sunvox_engine DEPENDS "${SUNVOX_STATIC_LIB_PATH}")
 
 add_library(sunvox_playback SHARED
     sunvox_plugin.c
 )
-add_dependencies(sunvox_playback sunvox_engine)
 
-target_include_directories(sunvox_playback PRIVATE
-    ${sunvox_dll_SOURCE_DIR}/sunvox_lib/headers
-)
-
-# The engine is C++; the plugin is C. Link the C++ runtime statically so it does
-# not appear in DT_NEEDED either.
-target_link_libraries(sunvox_playback PRIVATE
-    "${SUNVOX_STATIC_LIB_PATH}"
-)
+# The engine is C++; the plugin is C. Link the C++ runtime statically so it
+# does not appear in DT_NEEDED either.
+target_link_libraries(sunvox_playback PRIVATE sunvox_engine)
 if(WIN32)
-    # winmm, for two things the engine does on Windows regardless of the audio
-    # backend: the Waveform Audio (MMSYSTEM) driver, which is the one Windows
-    # backend with no compile-out switch upstream, and sundog_global_init's
+    # winmm, for the Waveform Audio driver -- the one Windows backend with no
+    # compile-out switch upstream -- and for sundog_global_init's
     # timeBeginPeriod call raising the system timer resolution.
     target_link_libraries(sunvox_playback PRIVATE winmm)
 elseif(UNIX AND NOT APPLE)
     target_link_options(sunvox_playback PRIVATE -static-libstdc++)
     target_link_libraries(sunvox_playback PRIVATE m pthread)
 elseif(APPLE)
-    # The engine's macOS build reaches for the system frameworks its own
-    # makefile links against.
+    # The engine reaches for the system frameworks its own makefile links.
     target_link_libraries(sunvox_playback PRIVATE
         "-framework Cocoa"
         "-framework Carbon"

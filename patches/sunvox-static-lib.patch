@@ -1,0 +1,57 @@
+Make the engine usable as a static library by another binary.
+
+The distribution builds a shared library that a host loads at runtime. This
+plugin compiles the same sources into its own artifact, and two things in
+them assume the other arrangement.
+
+sunvox_lib.cpp marks every sv_* function __declspec(dllexport), which is
+right for a DLL and wrong in a static archive: the attribute is inherited,
+so the linker re-exports all ~100 sv_* symbols from whatever binary links
+the objects. check_binary requires a plugin's export table to be exactly
+rv_playback_plugin, and harness.cmake installs no export control on Windows
+-- its --version-script and --exclude-libs,ALL are in the Linux branch.
+
+sunvox.h then typedefs LIBNAME_STR_TYPE to LPCTSTR on Windows, a type from
+<windows.h>, which the header never includes. That type exists only for
+sv_load_dll2() in the dynamic-loading half of the header. A static consumer
+resolves nothing at runtime and never names it, so declaring it there costs
+a consumer that has not already pulled in windows.h:
+
+    sunvox.h(78,13): error: unknown type name 'LPCTSTR'
+
+Both keys off SUNVOX_STATIC_LIB, the name the header already uses for this
+distinction, which the build defines. The rest of the static branch was
+checked for the same assumption and carries no other Windows type.
+
+diff --git a/sunvox_lib/headers/sunvox.h b/sunvox_lib/headers/sunvox.h
+index c230902..1c92373 100644
+--- a/sunvox_lib/headers/sunvox.h
++++ b/sunvox_lib/headers/sunvox.h
+@@ -75,7 +75,9 @@ typedef struct
+ #if defined(_WIN32) || defined(_WIN32_WCE) || defined(__WIN32__) || defined(_WIN64)
+     #define OS_WIN
+     #define LIBNAME "sunvox.dll"
+-    typedef LPCTSTR LIBNAME_STR_TYPE;
++    #ifndef SUNVOX_STATIC_LIB
++	typedef LPCTSTR LIBNAME_STR_TYPE;
++    #endif
+ #else
+     typedef const char* LIBNAME_STR_TYPE;
+ #endif
+diff --git a/sunvox_lib/main/sunvox_lib.cpp b/sunvox_lib/main/sunvox_lib.cpp
+index 1645ad4..18b3658 100644
+--- a/sunvox_lib/main/sunvox_lib.cpp
++++ b/sunvox_lib/main/sunvox_lib.cpp
+@@ -21,7 +21,11 @@
+ //      thread 2: sv_lock_slot(0); sv_remove_module(0,mod2); sv_unlock_slot(0);
+ 
+ #ifdef OS_WIN
+-    #define SUNVOX_EXPORT extern "C" __declspec(dllexport) __stdcall
++    #ifdef SUNVOX_STATIC_LIB
++	#define SUNVOX_EXPORT extern "C" __stdcall
++    #else
++	#define SUNVOX_EXPORT extern "C" __declspec(dllexport) __stdcall
++    #endif
+ #endif
+ #if defined(OS_APPLE) || defined(OS_LINUX) || defined(OS_EMSCRIPTEN)
+     #define SUNVOX_EXPORT extern "C"

@@ -1,15 +1,9 @@
-Build the engine and its bundled codecs with an MSVC-mode compiler.
+Compile the engine and its bundled codecs with an MSVC-mode compiler.
 
 The distribution's Windows path targets MinGW. The release harness compiles
-Windows plugins with clang-cl, and the engine has to be built by the same
-toolchain -- a MinGW archive cannot be linked into a clang-cl shared object,
-because the two disagree on the C++ ABI. That leaves four places where the
-sources assume a POSIX-ish compiler:
-
-  * M_PI. MSVC's <math.h> only declares it under _USE_MATH_DEFINES, and the
-    engine's DSP code reaches for it in about a hundred places across
-    lib_sunvox, lib_dsp and lib_flac. Define it for the whole Windows build
-    rather than per translation unit. MinGW ignores it.
+Windows plugins with clang-cl, which does not define __GNUC__, so every
+source that branches on it takes an MSVC path nobody upstream has exercised.
+Four of those paths are wrong:
 
   * tremor's endian macros. os_types.h defines LITTLE_ENDIAN, BIG_ENDIAN and
     BYTE_ORDER on Windows, but only inside its __GNUC__ branch. Without them
@@ -19,7 +13,7 @@ sources assume a POSIX-ish compiler:
     of the __GNUC__ branch is right for both compilers and changes nothing
     for MinGW.
 
-  * libFLAC's private/macros.h picks flac_min/flac_max from <sys/param.h>
+  * libFLAC's private/macros.h takes flac_min/flac_max from <sys/param.h>
     when HAVE_SYS_PARAM_H is set. Windows has no such header. The branch
     below it already handles _MSC_VER via __min/__max, so let the manual
     config stop claiming the header on Windows and fall through to it. MinGW
@@ -32,11 +26,10 @@ sources assume a POSIX-ish compiler:
   * the public header spells its calling convention as a trailing macro --
     "int sv_init( ... ) SUNVOX_FN_ATTR;" -- and picks __stdcall for anything
     that is not GCC. A trailing __stdcall is not valid MSVC syntax; the
-    keyword has to precede the declarator, so every declaration in the header
-    fails to parse. clang accepts __attribute__((stdcall)) in that position
-    under either driver, so widen the GCC branch to cover it. On x86_64 the
-    attribute is ignored by the ABI either way; this only makes the header
-    parse.
+    keyword has to precede the declarator, so every declaration fails to
+    parse. clang accepts __attribute__((stdcall)) there under either driver,
+    so widen the GCC branch to cover it. On x86_64 the attribute is ignored
+    by the ABI either way; this only makes the header parse.
 
 diff --git a/lib_flac/libFLAC/flac_config.h b/lib_flac/libFLAC/flac_config.h
 index ce99647..0338d2e 100644
@@ -92,20 +85,6 @@ index 1602f6d..59ce977 100644
     typedef long long ogg_int64_t;
     typedef int ogg_int32_t;
     typedef unsigned int ogg_uint32_t;
-diff --git a/sunvox_lib/make/Makefile b/sunvox_lib/make/Makefile
-index 6a32f8a..ec772b6 100755
---- a/sunvox_lib/make/Makefile
-+++ b/sunvox_lib/make/Makefile
-@@ -77,7 +77,8 @@ ifeq ($(TARGET_OS),windows)
-     LIBS =
-     SUNDOG_DEFINES += \
- 	-DCOLOR32BITS \
--	-D$(STYPE)
-+	-D$(STYPE) \
-+	-D_USE_MATH_DEFINES
- ifeq ($(MAKE_WITHOUT_AUDIO_DEVICE),true)
-     SUNDOG_DEFINES += -DNODSOUND -DNOASIO
- endif
 diff --git a/sunvox_lib/headers/sunvox.h b/sunvox_lib/headers/sunvox.h
 index ab03d88..c230902 100644
 --- a/sunvox_lib/headers/sunvox.h
