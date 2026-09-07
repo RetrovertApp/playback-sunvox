@@ -2,7 +2,7 @@ name: Release artifacts
 
 on:
   push:
-    branches: [master, windows-build]
+    branches: [master]
   workflow_dispatch: {}
 
 permissions:
