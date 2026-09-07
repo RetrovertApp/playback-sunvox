@@ -29,6 +29,15 @@ sources assume a POSIX-ish compiler:
     _VDBG_GRAPHFILE debug allocator uses gettimeofday. Guard the include with
     the thing that needs it.
 
+  * the public header spells its calling convention as a trailing macro --
+    "int sv_init( ... ) SUNVOX_FN_ATTR;" -- and picks __stdcall for anything
+    that is not GCC. A trailing __stdcall is not valid MSVC syntax; the
+    keyword has to precede the declarator, so every declaration in the header
+    fails to parse. clang accepts __attribute__((stdcall)) in that position
+    under either driver, so widen the GCC branch to cover it. On x86_64 the
+    attribute is ignored by the ABI either way; this only makes the header
+    parse.
+
 diff --git a/lib_flac/libFLAC/flac_config.h b/lib_flac/libFLAC/flac_config.h
 index ce99647..0338d2e 100644
 --- a/lib_flac/libFLAC/flac_config.h
@@ -97,3 +106,16 @@ index 6a32f8a..ec772b6 100755
  ifeq ($(MAKE_WITHOUT_AUDIO_DEVICE),true)
      SUNDOG_DEFINES += -DNODSOUND -DNOASIO
  endif
+diff --git a/sunvox_lib/headers/sunvox.h b/sunvox_lib/headers/sunvox.h
+index ab03d88..c230902 100644
+--- a/sunvox_lib/headers/sunvox.h
++++ b/sunvox_lib/headers/sunvox.h
+@@ -98,7 +98,7 @@ typedef struct
+ #endif
+ 
+ #ifdef OS_WIN
+-    #ifdef __GNUC__
++    #if defined(__GNUC__) || defined(__clang__)
+ 	#define SUNVOX_FN_ATTR __attribute__((stdcall))
+     #else
+ 	#define SUNVOX_FN_ATTR __stdcall
