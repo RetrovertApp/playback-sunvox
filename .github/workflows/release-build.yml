@@ -13,6 +13,6 @@ permissions:
 
 jobs:
   build:
-    uses: RetrovertApp/retrovert-build-harness/.github/workflows/build-plugin.yml@main
+    uses: RetrovertApp/retrovert-build-harness/.github/workflows/build-plugin.yml@v9
     with:
       upload: ${{ github.ref == 'refs/heads/master' }}
