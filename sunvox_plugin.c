@@ -16,6 +16,7 @@
 // rather than the dlopen-and-bind trampolines.
 #define SUNVOX_STATIC_LIB
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -46,6 +47,13 @@
 // Use slot 0 for playback (SunVox supports multiple slots but we use one)
 #define SUNVOX_SLOT 0
 
+// A SunVox project can hold far more modules than are worth drawing. Take the
+// first this many that exist; every project the plugin is likely to meet is
+// well under it.
+#define SUNVOX_MAX_SCOPE_CHANNELS 64
+// Scratch for one scope_samples() call, in int16 samples as the engine returns them.
+#define SUNVOX_SCOPE_SCRATCH 4096
+
 RV_PLUGIN_USE_IO_API();
 RV_PLUGIN_USE_LOG_API();
 RV_PLUGIN_USE_METADATA_API();
@@ -58,6 +66,11 @@ typedef struct SunvoxReplayerData {
     int playing;
     uint32_t song_length_frames;
     uint32_t elapsed_frames;
+    // Module numbers backing the scope channels, built once in open(). The
+    // module set is fixed after load, so the mapping stays valid for the song.
+    int32_t scope_mods[SUNVOX_MAX_SCOPE_CHANNELS];
+    uint32_t scope_count;
+    bool scope_enabled;
 } SunvoxReplayerData;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -148,6 +161,18 @@ static int sunvox_plugin_open(void* user_data, const char* url, uint32_t subsong
     // Get song length
     data->song_length_frames = sv_get_song_length_frames(SUNVOX_SLOT);
     data->elapsed_frames = 0;
+
+    // Collect the modules that will back the scope channels. sv_get_number_of_modules
+    // returns the number of module *slots*, most of which are usually empty, so each
+    // one has to be tested for SV_MODULE_FLAG_EXISTS. Module 0 is the Output module,
+    // whose scope is the master mix; it is kept first so the host draws it first.
+    data->scope_count = 0;
+    int module_slots = sv_get_number_of_modules(SUNVOX_SLOT);
+    for (int i = 0; i < module_slots && data->scope_count < SUNVOX_MAX_SCOPE_CHANNELS; i++) {
+        if (sv_get_module_flags(SUNVOX_SLOT, i) & SV_MODULE_FLAG_EXISTS) {
+            data->scope_mods[data->scope_count++] = i;
+        }
+    }
 
     // Start playback
     sv_play_from_beginning(SUNVOX_SLOT);
@@ -363,6 +388,126 @@ static void sunvox_plugin_static_destroy(void) {
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Visualization.
+//
+// SunVox is a modular synth, not a tracker with one pattern grid: patterns are
+// placed freely on a 2D timeline and several can sound at once, so there is no
+// single grid to hand the host. What it does have is a per-module scope, which
+// is what SunVox's own UI draws, so the plugin exposes one scope channel per
+// module plus VU levels derived from the same buffers.
+
+static bool sunvox_plugin_get_structure(void* user_data, RVVizInfo* out) {
+    SunvoxReplayerData* data = (SunvoxReplayerData*)user_data;
+    if (data == nullptr || out == nullptr || data->scope_count == 0) {
+        return false;
+    }
+
+    out->caps = RVVizCaps_Scope | RVVizCaps_Vu;
+    out->scroll_mode = RVScrollMode_Synchronized;
+    out->pattern_channel_count = 0;
+    out->scope_channel_count = data->scope_count;
+    out->column_count = 0;
+    return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static uint32_t sunvox_plugin_get_scope_channels(void* user_data, RVChannelDesc* out, uint32_t cap) {
+    SunvoxReplayerData* data = (SunvoxReplayerData*)user_data;
+    if (data == nullptr || out == nullptr) {
+        return 0;
+    }
+
+    uint32_t count = data->scope_count < cap ? data->scope_count : cap;
+    for (uint32_t i = 0; i < count; i++) {
+        int mod = data->scope_mods[i];
+        const char* name = sv_get_module_name(SUNVOX_SLOT, mod);
+        memset(out[i].name, 0, sizeof(out[i].name));
+        if (name != nullptr && name[0] != '\0') {
+            snprintf((char*)out[i].name, sizeof(out[i].name), "%s", name);
+        } else {
+            snprintf((char*)out[i].name, sizeof(out[i].name), "Module %d", mod);
+        }
+        out[i].scope_width = 1;
+    }
+    return count;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static void sunvox_plugin_set_scope_enabled(void* user_data, bool on) {
+    SunvoxReplayerData* data = (SunvoxReplayerData*)user_data;
+    if (data == nullptr) {
+        return;
+    }
+
+    // The engine fills its scope buffers unconditionally, so there is nothing to
+    // switch on; the flag only stops the host from reading stale samples.
+    data->scope_enabled = on;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Read one module's scope buffer as float [-1, 1]. The engine hands back int16
+// and, without PSYNTH_SCOPE_MODE_SLOW_HQ, only as many samples as the last
+// audio callback produced -- so a short read here is normal, not an error.
+
+static uint32_t sunvox_read_module_scope(int mod, float* out, uint32_t cap) {
+    int16_t scratch[SUNVOX_SCOPE_SCRATCH];
+
+    uint32_t want = cap < SUNVOX_SCOPE_SCRATCH ? cap : SUNVOX_SCOPE_SCRATCH;
+    uint32_t got = sv_get_module_scope2(SUNVOX_SLOT, mod, 0, scratch, want);
+    if (got > want) {
+        got = want;
+    }
+
+    for (uint32_t i = 0; i < got; i++) {
+        out[i] = (float)scratch[i] * (1.0f / 32768.0f);
+    }
+    return got;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static uint32_t sunvox_plugin_get_scope_samples(void* user_data, int32_t channel, float* out, uint32_t cap) {
+    SunvoxReplayerData* data = (SunvoxReplayerData*)user_data;
+    if (data == nullptr || out == nullptr || !data->scope_enabled) {
+        return 0;
+    }
+    if (channel < 0 || (uint32_t)channel >= data->scope_count) {
+        return 0;
+    }
+
+    return sunvox_read_module_scope(data->scope_mods[channel], out, cap);
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+static uint32_t sunvox_plugin_get_vu(void* user_data, float* out, uint32_t cap) {
+    SunvoxReplayerData* data = (SunvoxReplayerData*)user_data;
+    if (data == nullptr || out == nullptr) {
+        return 0;
+    }
+
+    uint32_t count = data->scope_count < cap ? data->scope_count : cap;
+    for (uint32_t i = 0; i < count; i++) {
+        float samples[256];
+        uint32_t got = sunvox_read_module_scope(data->scope_mods[i], samples, 256);
+
+        // Peak, not RMS: the host draws these as level meters and peak is what
+        // reads as "this module is sounding" for short percussive modules.
+        float peak = 0.0f;
+        for (uint32_t n = 0; n < got; n++) {
+            float v = samples[n] < 0.0f ? -samples[n] : samples[n];
+            if (v > peak) {
+                peak = v;
+            }
+        }
+        out[i] = peak;
+    }
+    return count;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 static RVPlaybackPlugin g_sunvox_plugin = {
     RV_PLAYBACK_PLUGIN_API_VERSION,
@@ -383,17 +528,18 @@ static RVPlaybackPlugin g_sunvox_plugin = {
     nullptr, // settings_updated
     sunvox_plugin_static_destroy,
 
-    // Visualization: none (caps = 0; pure decoder, no pattern grid or scope).
-    nullptr, // get_structure
+    // Visualization: per-module scope and VU. No pattern grid -- see the note
+    // above sunvox_plugin_get_structure.
+    sunvox_plugin_get_structure,
     nullptr, // get_columns
     nullptr, // get_pattern_channels
-    nullptr, // get_scope_channels
+    sunvox_plugin_get_scope_channels,
     nullptr, // get_position
     nullptr, // get_channel_rows
     nullptr, // get_cells
-    nullptr, // set_scope_enabled
-    nullptr, // get_scope_samples
-    nullptr, // get_vu
+    sunvox_plugin_set_scope_enabled,
+    sunvox_plugin_get_scope_samples,
+    sunvox_plugin_get_vu,
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
